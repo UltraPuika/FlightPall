@@ -1,0 +1,11 @@
+name = "flightpall-proxy"
+main = "src.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+# Comma-separated list of origins allowed to call this proxy (your GitHub Pages origin + local dev)
+ALLOWED_ORIGINS = "https://ultrapuika.github.io,http://localhost:5173"
+CACHE_SECONDS = "3600"
+
+# The token is a SECRET — never put it here. Set it with:
+#   npx wrangler secret put TRAVELPAYOUTS_TOKEN

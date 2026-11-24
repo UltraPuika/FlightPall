@@ -171,6 +171,12 @@ export interface SearchParams {
   destinations: string[];
   /** Region filter for "anywhere" mode; empty = all */
   regions: DestinationRegion[];
+  /** Number of travellers; prices are shown as totals for the group */
+  passengers: number;
+  /** True: airport cost is paid by each traveller (bus tickets). False: once per group (car, parking) */
+  airportCostPerPerson: boolean;
+  /** Allow flying home to a different enabled departure airport (combines two one-way fares) */
+  allowDifferentReturnAirport: boolean;
   /** ISO country codes to leave out in "anywhere" mode */
   excludedCountries: string[];
   earliestDeparture: IsoDate;
@@ -250,6 +256,25 @@ export interface FlightOffer {
   observedAt?: string;
   bookingUrl?: string;
   bookingProvider?: string;
+  /** Separate booking links per leg (e.g. two one-way tickets) */
+  legLinks?: ExternalLink[];
+}
+
+/** A single one-way fare, used to assemble trips that return to a different airport. */
+export interface OneWayFare {
+  id: string;
+  providerId: string;
+  providerName: string;
+  /** City or airport code the flight leaves from */
+  from: string;
+  /** City code the flight goes to */
+  to: string;
+  toAirport?: string;
+  leg: FlightLeg;
+  price: number;
+  priceKind: PriceKind;
+  observedAt?: string;
+  bookingUrl?: string;
 }
 
 export interface ExternalLink {
@@ -288,10 +313,23 @@ export interface TripResult {
   id: string;
   offer: FlightOffer;
   combination: DateCombination;
+  /** Airport you fly out from */
   airport: DepartureAirport;
+  /** Airport you fly back to (same as `airport` for a normal round trip) */
+  returnAirport: DepartureAirport;
+  /** True when returnAirport differs from airport */
+  differentReturnAirport: boolean;
   destination: Destination;
+  /** Ticket price for ONE traveller */
   flightPrice: number | null;
+  passengers: number;
+  /** Ticket price for the whole group */
+  ticketTotal: number | null;
+  /** Airport cost for the whole group */
+  airportCostTotal: number;
+  /** Airport cost; for different airports: ½ outbound airport cost + ½ return airport cost */
   airportCost: number;
+  /** Total for the whole group: tickets + airport costs */
   adjustedPrice: number | null;
   vacation: VacationBreakdown;
   conflicts: TimeConflict[];

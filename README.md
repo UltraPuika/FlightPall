@@ -73,6 +73,14 @@ All logic runs client-side. The only server-side piece is the optional proxy wor
 
 `adjusted = ticket price + airport additional cost`. Both numbers are shown on every result. The adjustment is used for ranking, budget filtering and the value score. Negative adjustments are allowed.
 
+### Travellers
+
+Set the number of travellers. Every price is the **total for the group**: `travellers × ticket + airport cost`. Airport costs are per person by default (bus tickets), or once per group (car/parking). The budget is for the whole group.
+
+### Returning to a different airport
+
+With *Allow returning to a different airport*, trips like RIX → Budapest → VNO are built from two one-way fares. The airport cost is then `½ × cost(out) + ½ × cost(back)`, e.g. ½ × €0 + ½ × €50 = €25 per person. In Anywhere mode the return legs are checked for the 12 cheapest destinations, to limit requests. Your own departure airports never appear as destinations.
+
 ### Trip duration
 
 - **Calendar days** (default): departure and return days both count. 4 days from Fri 15 Jan returns Mon 18 Jan.

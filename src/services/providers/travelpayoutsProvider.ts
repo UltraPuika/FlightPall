@@ -11,7 +11,7 @@
  * The API token must never reach the browser, and the API does not send CORS headers,
  * so requests go through the user's own free Cloudflare Worker (see /worker).
  */
-import type { FlightOffer } from '../../domain/types';
+import type { FlightOffer, OneWayFare } from '../../domain/types';
 import { monthsInRange } from '../../lib/dates';
 import { addMinutesToInstant } from '../../lib/time';
 import { ProviderError, type FlightProvider, type ProviderRequest, type ProviderSearchQuery } from './types';
@@ -87,8 +87,74 @@ export function parseTravelpayoutsResponse(body: TravelpayoutsResponse, fetchedA
   return out;
 }
 
+export function parseTravelpayoutsOneWay(body: TravelpayoutsResponse, fetchedAt: string): OneWayFare[] {
+  if (!body.success) throw new ProviderError(body.error || 'Provider returned an error', undefined, false);
+  if ((body.currency ?? 'eur').toLowerCase() !== 'eur') throw new ProviderError(`Unexpected currency ${body.currency}`);
+  const out: OneWayFare[] = [];
+  for (const row of body.data ?? []) {
+    if (typeof row.price !== 'number' || !row.departure_at) continue;
+    const dur = row.duration_to ?? row.duration;
+    const from = row.origin_airport ?? row.origin;
+    out.push({
+      // `from` is the city code so return legs can be matched to outbound destinations
+      id: `tp1:${from}:${row.destination_airport ?? row.destination}:${row.departure_at}:${row.airline ?? ''}${row.flight_number ?? ''}`,
+      providerId: 'travelpayouts',
+      providerName: 'Aviasales (Travelpayouts Data API)',
+      from: row.origin,
+      to: row.destination,
+      toAirport: row.destination_airport,
+      leg: {
+        from,
+        to: row.destination_airport ?? row.destination,
+        departAt: row.departure_at,
+        arriveAt: dur ? addMinutesToInstant(row.departure_at, dur) : undefined,
+        durationMinutes: dur,
+        stops: row.transfers ?? 0,
+        airline: row.airline,
+        flightNumber: row.flight_number !== undefined ? String(row.flight_number) : undefined,
+      },
+      price: row.price,
+      priceKind: 'indicative',
+      observedAt: fetchedAt,
+      bookingUrl: row.link ? `https://www.aviasales.com${row.link}` : undefined,
+    });
+  }
+  return out;
+}
+
 export function createTravelpayoutsProvider(proxyUrl: string | undefined, fetchImpl: typeof fetch = (...a) => fetch(...a)): FlightProvider {
   const base = proxyUrl?.replace(/\/+$/, '');
+
+  async function fetchPrices(req: ProviderRequest, oneWay: boolean, signal: AbortSignal): Promise<TravelpayoutsResponse> {
+    if (!base) throw new ProviderError('Travelpayouts proxy URL is not configured');
+    const params = new URLSearchParams({
+      origin: req.origin,
+      departure_at: req.month ?? '',
+      one_way: String(oneWay),
+      direct: String(req.directOnly),
+      currency: 'eur',
+      sorting: 'price',
+      unique: 'false',
+      limit: '1000',
+      page: '1',
+    });
+    if (req.destination) params.set('destination', req.destination);
+    let res: Response;
+    try {
+      res = await fetchImpl(`${base}/prices_for_dates?${params}`, { signal, headers: { Accept: 'application/json' } });
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') throw err;
+      throw new ProviderError(`Network error contacting proxy: ${(err as Error).message}`, undefined, true);
+    }
+    if (res.status === 429) {
+      const ra = Number(res.headers.get('Retry-After'));
+      throw new ProviderError('Rate limited by provider', 429, true, Number.isFinite(ra) && ra > 0 ? ra * 1000 : undefined);
+    }
+    if (res.status >= 500) throw new ProviderError(`Provider error ${res.status}`, res.status, true);
+    if (!res.ok) throw new ProviderError(`Provider rejected request (${res.status})`, res.status, false);
+    return (await res.json()) as TravelpayoutsResponse;
+  }
+
   return {
     id: 'travelpayouts',
     name: 'Aviasales cached fares (Travelpayouts)',
@@ -127,34 +193,12 @@ export function createTravelpayoutsProvider(proxyUrl: string | undefined, fetchI
       return out;
     },
     async execute(req, signal) {
-      if (!base) throw new ProviderError('Travelpayouts proxy URL is not configured');
-      const params = new URLSearchParams({
-        origin: req.origin,
-        departure_at: req.month ?? '',
-        one_way: 'false',
-        direct: String(req.directOnly),
-        currency: 'eur',
-        sorting: 'price',
-        unique: 'false',
-        limit: '1000',
-        page: '1',
-      });
-      if (req.destination) params.set('destination', req.destination);
-      let res: Response;
-      try {
-        res = await fetchImpl(`${base}/prices_for_dates?${params}`, { signal, headers: { Accept: 'application/json' } });
-      } catch (err) {
-        if ((err as Error).name === 'AbortError') throw err;
-        throw new ProviderError(`Network error contacting proxy: ${(err as Error).message}`, undefined, true);
-      }
-      if (res.status === 429) {
-        const ra = Number(res.headers.get('Retry-After'));
-        throw new ProviderError('Rate limited by provider', 429, true, Number.isFinite(ra) && ra > 0 ? ra * 1000 : undefined);
-      }
-      if (res.status >= 500) throw new ProviderError(`Provider error ${res.status}`, res.status, true);
-      if (!res.ok) throw new ProviderError(`Provider rejected request (${res.status})`, res.status, false);
-      const body = (await res.json()) as TravelpayoutsResponse;
+      const body = await fetchPrices(req, false, signal);
       return parseTravelpayoutsResponse(body, new Date().toISOString());
+    },
+    async executeOneWay(req, signal) {
+      const body = await fetchPrices(req, true, signal);
+      return parseTravelpayoutsOneWay(body, new Date().toISOString());
     },
   };
 }

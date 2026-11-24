@@ -33,7 +33,8 @@ export const SORT_LABELS: Record<SortKey, string> = {
  */
 export function valueScore(r: TripResult, vacationDayValue: number): number | null {
   if (r.adjustedPrice === null) return null;
-  return (r.adjustedPrice + r.vacation.vacationDays * vacationDayValue) / r.vacation.calendarDays;
+  // Every traveller uses their own vacation days
+  return (r.adjustedPrice + r.vacation.vacationDays * vacationDayValue * (r.passengers ?? 1)) / r.vacation.calendarDays;
 }
 
 export function pricePerDay(r: TripResult): number | null {
@@ -98,7 +99,9 @@ export function explainRank(r: TripResult, opts: RankingOptions): string {
   const price =
     r.adjustedPrice === null
       ? 'price unknown'
-      : `${formatEuro(r.adjustedPrice)} adjusted (ticket ${formatEuro(r.flightPrice)} ${r.airportCost >= 0 ? '+' : '−'} ${r.airport.code} cost ${formatEuro(Math.abs(r.airportCost))})`;
+      : `${formatEuro(r.adjustedPrice)} ${r.passengers > 1 ? `total for ${r.passengers}` : 'adjusted'} (${r.passengers > 1 ? `${r.passengers} × ` : ''}ticket ${formatEuro(r.flightPrice)} ${r.airportCostTotal >= 0 ? '+' : '−'} ${
+          r.differentReturnAirport ? `½ ${r.airport.code} + ½ ${r.returnAirport.code} cost` : `${r.airport.code} cost`
+        } ${formatEuro(Math.abs(r.airportCostTotal))})`;
   switch (opts.sortKey) {
     case 'adjusted_price':
       parts.push(price);
@@ -129,7 +132,7 @@ export function explainRank(r: TripResult, opts: RankingOptions): string {
       parts.push(
         vs === null
           ? 'price unknown'
-          : `${formatEuro(Math.round(vs * 10) / 10)}/day = (${formatEuro(r.adjustedPrice)} + ${r.vacation.vacationDays} vacation day(s) × ${formatEuro(opts.vacationDayValue)}) ÷ ${r.vacation.calendarDays} days`,
+          : `${formatEuro(Math.round(vs * 10) / 10)}/day = (${formatEuro(r.adjustedPrice)} + ${r.vacation.vacationDays} vacation day(s) × ${formatEuro(opts.vacationDayValue)}${r.passengers > 1 ? ` × ${r.passengers} people` : ''}) ÷ ${r.vacation.calendarDays} days`,
       );
       break;
     }
@@ -158,7 +161,7 @@ export function applyFilters(results: TripResult[], f: ResultFilters): TripResul
     const stops = Math.max(r.offer.outbound.stops, r.offer.inbound.stops);
     if (f.directOnly && stops > 0) return false;
     if (f.maxStops !== null && stops > f.maxStops) return false;
-    if (f.airports.length && !f.airports.includes(r.airport.code)) return false;
+    if (f.airports.length && !f.airports.includes(r.airport.code) && !f.airports.includes(r.returnAirport.code)) return false;
     if (f.destinations.length && !f.destinations.includes(r.destination.code)) return false;
     if (f.minDuration !== null && r.combination.duration < f.minDuration) return false;
     if (f.maxDuration !== null && r.combination.duration > f.maxDuration) return false;

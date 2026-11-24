@@ -1,4 +1,4 @@
-import type { DateCombination, FlightOffer, PriceKind } from '../../domain/types';
+import type { DateCombination, FlightOffer, OneWayFare, PriceKind } from '../../domain/types';
 
 /** A search, as handed to a provider for planning. */
 export interface ProviderSearchQuery {
@@ -24,6 +24,8 @@ export interface ProviderRequest {
   /** Combinations this request is expected to cover */
   combinations: DateCombination[];
   directOnly: boolean;
+  /** One-way request (origin → destination only) */
+  oneWay?: boolean;
 }
 
 export interface ProviderCapabilities {
@@ -50,6 +52,8 @@ export interface FlightProvider {
   unavailableReason?(): string;
   planRequests(query: ProviderSearchQuery): ProviderRequest[];
   execute(request: ProviderRequest, signal: AbortSignal): Promise<FlightOffer[]>;
+  /** Optional: one-way fares for a request with `oneWay: true` (enables different return airports) */
+  executeOneWay?(request: ProviderRequest, signal: AbortSignal): Promise<OneWayFare[]>;
   /** Optional live re-check; returns an updated offer or null if no longer available */
   revalidate?(offer: FlightOffer, signal: AbortSignal): Promise<FlightOffer | null>;
 }

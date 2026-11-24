@@ -15,6 +15,8 @@ export interface ConflictContext {
   schedule: WorkSchedule;
   /** Time zone of the departure (home) airport */
   homeTimeZone: string;
+  /** Time zone of the airport you return to, if different */
+  returnTimeZone?: string;
 }
 
 function workHours(calendar: HolidayCalendar, schedule: WorkSchedule, date: IsoDate) {
@@ -56,9 +58,10 @@ export function detectTimeConflicts(offer: FlightOffer, ctx: ConflictContext): T
 
   // Inbound arrival at home
   if (offer.inbound.arriveAt) {
-    const arr = toLocal(offer.inbound.arriveAt, homeTimeZone);
+    const backTz = ctx.returnTimeZone ?? homeTimeZone;
+    const arr = toLocal(offer.inbound.arriveAt, backTz);
     const arrHours = workHours(calendar, schedule, arr.date);
-    const retDate = toLocal(offer.inbound.departAt, homeTimeZone).date;
+    const retDate = toLocal(offer.inbound.departAt, backTz).date;
     if (arr.date > retDate) {
       out.push({
         leg: 'inbound',

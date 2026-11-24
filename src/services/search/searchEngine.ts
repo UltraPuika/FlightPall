@@ -6,16 +6,20 @@
  *  4. stream partial, evaluated results back via `onProgress`
  *  5. support cancellation and partial failure
  */
-import type { DateCombination, DepartureAirport, FlightOffer, SearchParams, TripResult, WorkSchedule } from '../../domain/types';
-import { DESTINATIONS } from '../../data/airports';
-import { todayIso } from '../../lib/dates';
+import type { DateCombination, DepartureAirport, FlightOffer, OneWayFare, SearchParams, TripResult, WorkSchedule } from '../../domain/types';
+import { DESTINATIONS, findDestination } from '../../data/airports';
+import { monthsInRange, todayIso } from '../../lib/dates';
 import { enabledAirports } from '../airports';
 import type { HolidayCalendar } from '../calendar/holidayCalendar';
 import type { FlightProvider, ProviderRequest } from '../providers/types';
 import type { CacheStore } from './cache';
 import { combinationKey, generateDateCombinations, returnDateFor, validateWindow } from './dateCombinations';
 import { isAbort, runQueue } from './requestQueue';
+import { combineOneWayFares } from './openJaw';
 import { buildTripResult, dedupeResults, type TripBuildContext } from './tripBuilder';
+
+/** In "anywhere" mode, return flights to other airports are checked for this many cheapest destinations. */
+export const OPEN_JAW_ANYWHERE_DESTINATIONS = 12;
 
 export type SearchStatus = 'idle' | 'running' | 'done' | 'cancelled' | 'error';
 
@@ -38,7 +42,7 @@ export interface SearchInput {
   provider: FlightProvider;
   calendar: HolidayCalendar;
   schedule: WorkSchedule;
-  cache?: CacheStore<FlightOffer[]>;
+  cache?: CacheStore<unknown>;
   signal: AbortSignal;
   onProgress?: (p: SearchProgress) => void;
   today?: string;
@@ -125,8 +129,6 @@ export async function runSearch(input: SearchInput): Promise<SearchProgress> {
   const unique = new Map<string, ProviderRequest>();
   for (const r of planned) if (!unique.has(r.key)) unique.set(r.key, r);
   const requests = Array.from(unique.values());
-  progress.totalRequests = requests.length;
-  emit();
 
   const ctx: TripBuildContext = {
     params,
@@ -134,56 +136,57 @@ export async function runSearch(input: SearchInput): Promise<SearchProgress> {
     schedule,
     airportsByCode: new Map(airports.map((a) => [a.code, a])),
     combinationsByKey: new Map(combinations.map((c) => [combinationKey(c), c])),
+    // Never suggest flying to one of your own departure airports (enabled or not)
+    excludedDestinations: new Set(input.airports.map((a) => a.code)),
   };
   const regionFilter = params.mode === 'anywhere' && params.regions.length ? new Set(params.regions) : null;
   const excluded = params.mode === 'anywhere' ? new Set(params.excludedCountries ?? []) : new Set<string>();
+  const destinationAllowed = (code: string) => {
+    if (ctx.excludedDestinations?.has(code)) return false;
+    const d = findDestination(code);
+    if (regionFilter && d.code !== 'ANYWHERE' && !regionFilter.has(d.region)) return false;
+    if (excluded.size && excluded.has(d.countryCode)) return false;
+    return true;
+  };
   const collected = new Map<string, TripResult>();
   let truncated = false;
 
-  const ingest = (req: ProviderRequest, offers: FlightOffer[]) => {
+  const ingest = (origin: string, offers: FlightOffer[]) => {
     progress.rawOffers += offers.length;
     for (const offer of offers) {
       if (collected.size >= maxResults) {
         truncated = true;
         break;
       }
-      const r = buildTripResult(offer, req.origin, ctx);
-      if (!r) continue;
-      if (regionFilter && r.destination.code !== 'ANYWHERE' && !regionFilter.has(r.destination.region)) continue;
-      if (excluded.size && excluded.has(r.destination.countryCode)) continue;
+      const r = buildTripResult(offer, origin, ctx);
+      if (!r || !destinationAllowed(r.destination.code)) continue;
       collected.set(r.id, r);
     }
     progress.results = dedupeResults(collected.values());
   };
 
-  // Serve cached requests immediately
-  const pending: ProviderRequest[] = [];
-  for (const req of requests) {
-    const hit = cache?.get(req.key);
-    if (hit) {
-      ingest(req, hit);
-      progress.cachedRequests++;
-      progress.completedRequests++;
-    } else pending.push(req);
-  }
-  emit();
-
-  try {
+  /** Runs a batch of requests with cache, throttling, retries and progress reporting. */
+  async function runBatch<T>(reqs: ProviderRequest[], exec: (r: ProviderRequest) => Promise<T[]>, onResult: (r: ProviderRequest, v: T[]) => void) {
+    progress.totalRequests += reqs.length;
+    const pending: ProviderRequest[] = [];
+    for (const req of reqs) {
+      const hit = cache?.get(req.key) as T[] | undefined;
+      if (hit) {
+        onResult(req, hit);
+        progress.cachedRequests++;
+        progress.completedRequests++;
+      } else pending.push(req);
+    }
+    emit();
     await runQueue(
-      pending.map((req) => () => provider.execute(req, signal)),
-      {
-        concurrency: provider.capabilities.maxConcurrency,
-        minIntervalMs: provider.capabilities.minIntervalMs,
-        maxRetries: 3,
-        baseBackoffMs: 1000,
-        signal,
-      },
+      pending.map((req) => () => exec(req)),
+      { concurrency: provider.capabilities.maxConcurrency, minIntervalMs: provider.capabilities.minIntervalMs, maxRetries: 3, baseBackoffMs: 1000, signal },
       (index, outcome) => {
         const req = pending[index];
         progress.completedRequests++;
         if (outcome.ok) {
           cache?.set(req.key, outcome.value, provider.capabilities.cacheTtlMs);
-          ingest(req, outcome.value);
+          onResult(req, outcome.value);
         } else {
           progress.failedRequests++;
           progress.errors.push({ label: req.label, message: outcome.error.message });
@@ -191,6 +194,55 @@ export async function runSearch(input: SearchInput): Promise<SearchProgress> {
         emit();
       },
     );
+  }
+
+  try {
+    // Phase 1: round trips (same airport out and back)
+    await runBatch(requests, (r) => provider.execute(r, signal), (r, offers) => ingest(r.origin, offers));
+
+    // Phase 2: trips returning to a different departure airport, from pairs of one-way fares
+    const executeOneWay = provider.executeOneWay?.bind(provider);
+    if (params.allowDifferentReturnAirport && executeOneWay && airports.length > 1) {
+      const deps = combinations.map((c) => c.departure).sort();
+      const rets = combinations.map((c) => c.return).sort();
+      const depMonths = monthsInRange(deps[0], deps[deps.length - 1]);
+      const retMonths = monthsInRange(rets[0], rets[rets.length - 1]);
+      const dir = params.directOnly ? 'd' : 'a';
+      const outDests = destinations === 'anywhere' ? [undefined] : destinations.filter(destinationAllowed);
+      const outReqs: ProviderRequest[] = airports.flatMap((a) =>
+        outDests.flatMap((d) =>
+          depMonths.map((m) => ({ key: `ow|${provider.id}|${a.code}|${d ?? '*'}|${m}|${dir}`, label: `${a.code} → ${d ?? 'anywhere'} (one-way) · ${m}`, origin: a.code, destination: d, month: m, combinations: [], directOnly: params.directOnly, oneWay: true })),
+        ),
+      );
+      const outFares: OneWayFare[] = [];
+      await runBatch(outReqs, (r) => executeOneWay(r, signal), (_r, fares) => outFares.push(...fares));
+
+      // Which destinations to check return flights for
+      let backDests: string[];
+      if (destinations === 'anywhere') {
+        const cheapest = new Map<string, number>();
+        for (const f of outFares) {
+          const code = findDestination(f.to).code;
+          if (!destinationAllowed(code)) continue;
+          cheapest.set(code, Math.min(cheapest.get(code) ?? Infinity, f.price));
+        }
+        backDests = Array.from(cheapest.entries()).sort((x, y) => x[1] - y[1]).slice(0, OPEN_JAW_ANYWHERE_DESTINATIONS).map(([c]) => c);
+        if (cheapest.size > backDests.length)
+          progress.warnings.push(`Different return airports were checked for the ${backDests.length} cheapest destinations only (to limit requests). Pick specific destinations to check others.`);
+      } else backDests = outDests as string[];
+
+      const inReqs: ProviderRequest[] = backDests.flatMap((d) =>
+        airports.flatMap((b) =>
+          retMonths.map((m) => ({ key: `ow|${provider.id}|${d}|${b.code}|${m}|${dir}`, label: `${d} → ${b.code} (one-way) · ${m}`, origin: d, destination: b.code, month: m, combinations: [], directOnly: params.directOnly, oneWay: true })),
+        ),
+      );
+      const inFares: OneWayFare[] = [];
+      await runBatch(inReqs, (r) => executeOneWay(r, signal), (_r, fares) => inFares.push(...fares));
+
+      const pairs = combineOneWayFares(outFares, inFares, combinations, ctx.airportsByCode);
+      ingest('', pairs);
+      emit();
+    }
     progress.status = 'done';
   } catch (err) {
     if (isAbort(err) || signal.aborted) progress.status = 'cancelled';

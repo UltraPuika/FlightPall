@@ -10,12 +10,14 @@ import { ProviderError, type FlightProvider } from '../src/services/providers/ty
 import { applyFilters, EMPTY_FILTERS, explainRank, sortResults, valueScore } from '../src/services/ranking';
 import { createTtlCache } from '../src/services/search/cache';
 import { runSearch } from '../src/services/search/searchEngine';
+import { tripAirportCost } from '../src/services/search/tripBuilder';
+import { combineOneWayFares } from '../src/services/search/openJaw';
 import { localToInstant } from '../src/lib/time';
-import { defaultSearchParams } from '../src/services/storage';
+import { defaultPreferences, defaultSearchParams, mergePreferences } from '../src/services/storage';
 
 const TODAY = '2026-11-24';
 const calendar = () => createCalendar(DEFAULT_SCHEDULE, DEFAULT_CALENDAR_SETTINGS);
-const airports = (): DepartureAirport[] => DEFAULT_DEPARTURE_AIRPORTS.map((a) => ({ ...a }));
+const airports = (): DepartureAirport[] => DEFAULT_DEPARTURE_AIRPORTS.map((a) => ({ ...a, additionalCost: a.code === 'RIX' ? 0 : 100 }));
 
 function params(over: Partial<SearchParams> = {}): SearchParams {
   return {
@@ -168,7 +170,7 @@ describe('search engine', () => {
   it('groups requests per origin × destination × month', async () => {
     const provider = createDemoProvider();
     const spy = vi.spyOn(provider, 'execute');
-    const res = await runSearch({ params: params({ destinations: ['ROM', 'BCN'] }), airports: airports(), provider, calendar: calendar(), schedule: DEFAULT_SCHEDULE, signal: new AbortController().signal, today: TODAY });
+    const res = await runSearch({ params: params({ destinations: ['ROM', 'BCN'], allowDifferentReturnAirport: false }), airports: airports(), provider, calendar: calendar(), schedule: DEFAULT_SCHEDULE, signal: new AbortController().signal, today: TODAY });
     expect(res.totalRequests).toBe(4 * 2 * 2);
     expect(spy).toHaveBeenCalledTimes(16);
   });
@@ -214,7 +216,7 @@ describe('search engine', () => {
   it('reports progress incrementally', async () => {
     const seen: number[] = [];
     await runSearch({
-      params: params(),
+      params: params({ allowDifferentReturnAirport: false }),
       airports: airports(),
       provider: createDemoProvider(),
       calendar: calendar(),
@@ -243,6 +245,81 @@ describe('search engine', () => {
   it('rejects invalid searches', async () => {
     const res = await runSearch({ params: params({ minDuration: 6 }), airports: airports(), provider: createDemoProvider(), calendar: calendar(), schedule: DEFAULT_SCHEDULE, signal: new AbortController().signal, today: TODAY });
     expect(res.status).toBe('error');
+  });
+});
+
+describe('departure airports and different return airports', () => {
+  it('never offers a departure airport as a destination', async () => {
+    const p = staticProvider([offer('VNO', 'TLL', '2027-01-15', '2027-01-18', 30), offer('RIX', 'KUN', '2027-01-15', '2027-01-18', 30), offer('RIX', 'ROM', '2027-01-15', '2027-01-18', 150)]);
+    const list = airports();
+    list.find((a) => a.code === 'KUN')!.enabled = false; // disabled airports are excluded too
+    const res = await runSearch({ params: params({ mode: 'anywhere', destinations: [] }), airports: list, provider: p, calendar: calendar(), schedule: DEFAULT_SCHEDULE, signal: new AbortController().signal, today: TODAY });
+    expect(res.results.map((r) => r.destination.code)).toEqual(['ROM']);
+  });
+
+  it('airport cost is half of each airport when returning elsewhere', () => {
+    expect(tripAirportCost({ code: 'RIX', additionalCost: 0 }, { code: 'VNO', additionalCost: 100 })).toBe(50);
+    expect(tripAirportCost({ code: 'TLL', additionalCost: 100 }, { code: 'VNO', additionalCost: 100 })).toBe(100);
+    expect(tripAirportCost({ code: 'RIX', additionalCost: 0 }, { code: 'RIX', additionalCost: 0 })).toBe(0);
+    expect(tripAirportCost({ code: 'KUN', additionalCost: 100 }, { code: 'KUN', additionalCost: 100 })).toBe(100);
+  });
+
+  it('combines one-way fares into RIX → BUD → VNO trips', () => {
+    const ap = new Map(airports().map((a) => [a.code, a]));
+    const leg = (from: string, to: string, date: string, tz: string, min: number) => ({ from, to, departAt: localToInstant(date, min, tz), stops: 0 });
+    const out = [{ id: 'o1', providerId: 'tp', providerName: 'TP', from: 'RIX', to: 'BUD', leg: leg('RIX', 'BUD', '2027-01-15', 'Europe/Riga', 600), price: 40, priceKind: 'indicative' as const }];
+    const back = [
+      { id: 'b1', providerId: 'tp', providerName: 'TP', from: 'BUD', to: 'VNO', leg: leg('BUD', 'VNO', '2027-01-18', 'Europe/Budapest', 900), price: 30, priceKind: 'indicative' as const },
+      { id: 'b2', providerId: 'tp', providerName: 'TP', from: 'BUD', to: 'VNO', leg: leg('BUD', 'VNO', '2027-01-18', 'Europe/Budapest', 1000), price: 50, priceKind: 'indicative' as const },
+    ];
+    const combos = [{ departure: '2027-01-15', return: '2027-01-18', duration: 4, calendarDays: 4, nights: 3 }];
+    const offers = combineOneWayFares(out, back, combos, ap);
+    expect(offers).toHaveLength(1);
+    expect(offers[0]).toMatchObject({ origin: 'RIX', destination: 'BUD', price: 70 });
+    expect(offers[0].inbound.to).toBe('VNO');
+  });
+
+  it('demo search produces different-return-airport trips with half airport costs', async () => {
+    const res = await runSearch({ params: params({ mode: 'anywhere', destinations: [] }), airports: airports(), provider: createDemoProvider(), calendar: calendar(), schedule: DEFAULT_SCHEDULE, signal: new AbortController().signal, today: TODAY });
+    const mixed = res.results.filter((r) => r.differentReturnAirport);
+    expect(mixed.length).toBeGreaterThan(0);
+    for (const r of mixed) {
+      expect(r.airport.code).not.toBe(r.returnAirport.code);
+      expect(r.airportCost).toBe((r.airport.additionalCost + r.returnAirport.additionalCost) / 2);
+      expect(r.adjustedPrice).toBe((r.flightPrice ?? 0) + r.airportCost);
+      expect(r.offer.inbound.to).toBe(r.returnAirport.code);
+    }
+    const off = await runSearch({ params: params({ mode: 'anywhere', destinations: [], allowDifferentReturnAirport: false }), airports: airports(), provider: createDemoProvider(), calendar: calendar(), schedule: DEFAULT_SCHEDULE, signal: new AbortController().signal, today: TODAY });
+    expect(off.results.some((r) => r.differentReturnAirport)).toBe(false);
+  });
+});
+
+describe('travellers', () => {
+  it('default airport costs are €50 per person for TLL, VNO and KUN', () => {
+    expect(DEFAULT_DEPARTURE_AIRPORTS.map((a) => [a.code, a.additionalCost])).toEqual([['RIX', 0], ['TLL', 50], ['VNO', 50], ['KUN', 50]]);
+  });
+
+  it('shows totals for the group', async () => {
+    const list = DEFAULT_DEPARTURE_AIRPORTS.map((a) => ({ ...a }));
+    const p = staticProvider([offer('KUN', 'ROM', '2027-01-15', '2027-01-18', 60), offer('RIX', 'ROM', '2027-01-15', '2027-01-18', 150)]);
+    const run = (over: Partial<SearchParams>) =>
+      runSearch({ params: params({ allowDifferentReturnAirport: false, ...over }), airports: list, provider: p, calendar: calendar(), schedule: DEFAULT_SCHEDULE, signal: new AbortController().signal, today: TODAY });
+    const two = await run({ passengers: 2 });
+    const kun = two.results.find((r) => r.airport.code === 'KUN')!;
+    expect([kun.ticketTotal, kun.airportCostTotal, kun.adjustedPrice]).toEqual([120, 100, 220]);
+    const rix = two.results.find((r) => r.airport.code === 'RIX')!;
+    expect(rix.adjustedPrice).toBe(300);
+    const group = await run({ passengers: 2, airportCostPerPerson: false });
+    expect(group.results.find((r) => r.airport.code === 'KUN')!.adjustedPrice).toBe(170);
+    const budget = await run({ passengers: 2, budget: 250 });
+    expect(budget.results.map((r) => r.airport.code)).toEqual(['KUN']);
+  });
+
+  it('migrates untouched old €100 defaults to €50', () => {
+    const old = { ...defaultPreferences(), airports: DEFAULT_DEPARTURE_AIRPORTS.map((a) => (a.code === 'RIX' ? { ...a } : { ...a, additionalCost: 100, costNote: a.costNote!.replace(', per person', '') })) };
+    old.airports[3] = { ...old.airports[3], additionalCost: 100, costNote: 'my car' };
+    const merged = mergePreferences(old);
+    expect(merged.airports.map((a) => a.additionalCost)).toEqual([0, 50, 50, 100]);
   });
 });
 

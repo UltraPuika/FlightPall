@@ -40,6 +40,9 @@ export function defaultSearchParams(today = todayIso()): SearchParams {
     destinations: [],
     regions: [],
     excludedCountries: [],
+    allowDifferentReturnAirport: true,
+    passengers: 1,
+    airportCostPerPerson: true,
     earliestDeparture: start,
     latestDeparture: addDays(start, 59 - 2),
     latestReturn: addDays(start, 59),
@@ -93,10 +96,16 @@ export function mergePreferences(stored: Partial<Preferences> | null | undefined
     search.latestDeparture = defaults.search.latestDeparture;
     search.latestReturn = defaults.search.latestReturn;
   }
+  // Migration: old default of €100 for TLL/VNO/KUN becomes €50 per person (only if never edited)
+  const OLD_NOTES: Record<string, string> = { TLL: 'Bus Riga ⇄ Tallinn', VNO: 'Bus Riga ⇄ Vilnius', KUN: 'Bus Riga ⇄ Kaunas' };
+  const airports = (Array.isArray(stored.airports) && stored.airports.length ? stored.airports : defaults.airports).map((a) => {
+    const def = defaults.airports.find((d) => d.code === a.code);
+    return def && OLD_NOTES[a.code] && a.additionalCost === 100 && a.costNote === OLD_NOTES[a.code] ? { ...a, additionalCost: def.additionalCost, costNote: def.costNote } : a;
+  });
   return {
     ...defaults,
     ...stored,
-    airports: Array.isArray(stored.airports) && stored.airports.length ? stored.airports : defaults.airports,
+    airports,
     schedule: { ...defaults.schedule, ...(stored.schedule ?? {}) },
     calendar: { ...defaults.calendar, ...(stored.calendar ?? {}) },
     search: normalizeTravelWindow(search),

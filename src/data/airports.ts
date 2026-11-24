@@ -3,9 +3,9 @@ import type { DepartureAirport, Destination, DestinationRegion } from '../domain
 /** Default departure airports. Additional costs are examples — edit them in Settings. */
 export const DEFAULT_DEPARTURE_AIRPORTS: DepartureAirport[] = [
   { code: 'RIX', city: 'Riga', country: 'Latvia', countryCode: 'LV', timeZone: 'Europe/Riga', enabled: true, additionalCost: 0 },
-  { code: 'TLL', city: 'Tallinn', country: 'Estonia', countryCode: 'EE', timeZone: 'Europe/Tallinn', enabled: true, additionalCost: 100, costNote: 'Bus Riga ⇄ Tallinn' },
-  { code: 'VNO', city: 'Vilnius', country: 'Lithuania', countryCode: 'LT', timeZone: 'Europe/Vilnius', enabled: true, additionalCost: 100, costNote: 'Bus Riga ⇄ Vilnius' },
-  { code: 'KUN', city: 'Kaunas', country: 'Lithuania', countryCode: 'LT', timeZone: 'Europe/Vilnius', enabled: true, additionalCost: 100, costNote: 'Bus Riga ⇄ Kaunas' },
+  { code: 'TLL', city: 'Tallinn', country: 'Estonia', countryCode: 'EE', timeZone: 'Europe/Tallinn', enabled: true, additionalCost: 50, costNote: 'Bus Riga ⇄ Tallinn, per person' },
+  { code: 'VNO', city: 'Vilnius', country: 'Lithuania', countryCode: 'LT', timeZone: 'Europe/Vilnius', enabled: true, additionalCost: 50, costNote: 'Bus Riga ⇄ Vilnius, per person' },
+  { code: 'KUN', city: 'Kaunas', country: 'Lithuania', countryCode: 'LT', timeZone: 'Europe/Vilnius', enabled: true, additionalCost: 50, costNote: 'Bus Riga ⇄ Kaunas, per person' },
 ];
 
 /** Other nearby airports a user can add with one click. */

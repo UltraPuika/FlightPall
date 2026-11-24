@@ -105,7 +105,7 @@ export function SearchForm({ prefs, update, calendar, running, onSearch, onCance
         step={2}
         title="Departure airports"
         icon={<Plane className="h-4 w-4 text-brand-600" />}
-        hint="Adjusted price = ticket price + your extra cost of reaching that airport (both ways). Negative values are allowed."
+        hint="Adjusted price = ticket price + your extra cost of reaching that airport and back (per person by default). Negative values are allowed."
       >
         <div className="grid gap-2 sm:grid-cols-2">
           {prefs.airports.map((a, i) => (
@@ -143,6 +143,15 @@ export function SearchForm({ prefs, update, calendar, running, onSearch, onCance
               </div>
             </div>
           ))}
+        </div>
+        <div className="mt-3">
+          <Toggle
+            checked={p.allowDifferentReturnAirport ?? true}
+            onChange={(allowDifferentReturnAirport) => set({ allowDifferentReturnAirport })}
+            disabled={prefs.provider === 'links' || airportsOn.length < 2}
+            label="Allow returning to a different airport"
+            description="E.g. RIX → Budapest → VNO, built from two one-way tickets. Each airport's cost counts half: ½ × €0 + ½ × €50 = €25 per person. Needs more requests, so searches take longer."
+          />
         </div>
         <button type="button" onClick={onOpenSettings} className="mt-2 text-xs font-medium text-brand-700 hover:underline">
           Add or manage airports →
@@ -278,11 +287,29 @@ export function SearchForm({ prefs, update, calendar, running, onSearch, onCance
       </Section>
 
       {/* 6. Budget */}
-      <Section step={6} title="Budget" icon={<Wallet className="h-4 w-4 text-brand-600" />} hint="Maximum adjusted price per person, including the airport cost. Leave empty for no limit.">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-slate-500">€</span>
-          <NumberInput ariaLabel="Maximum adjusted budget" className="w-32" value={p.budget} allowEmpty min={0} step={10} placeholder="No limit" onChange={(budget) => set({ budget })} />
+      <Section step={6} title="Travellers & budget" icon={<Wallet className="h-4 w-4 text-brand-600" />} hint="All prices are shown as the total for everyone travelling.">
+        <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
+          <Field label="Travellers">
+            <Stepper label="travellers" value={p.passengers ?? 1} min={1} max={9} onChange={(passengers) => set({ passengers })} />
+          </Field>
+          <Field label="Max total budget (all travellers)">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-slate-500">€</span>
+              <NumberInput ariaLabel="Maximum total budget" className="w-32" value={p.budget} allowEmpty min={0} step={10} placeholder="No limit" onChange={(budget) => set({ budget })} />
+            </div>
+          </Field>
         </div>
+        <div className="mt-3">
+          <Toggle
+            checked={p.airportCostPerPerson ?? true}
+            onChange={(airportCostPerPerson) => set({ airportCostPerPerson })}
+            label="Airport costs are per person"
+            description={(p.airportCostPerPerson ?? true) ? 'Each traveller pays it, like a bus ticket.' : 'Paid once for the group, like a car, fuel or parking.'}
+          />
+        </div>
+        {(p.passengers ?? 1) > 1 && (
+          <p className="mt-2 text-xs text-slate-500">Cached fares are per adult. The final price for {p.passengers} people depends on seats left, so check it on the booking site.</p>
+        )}
       </Section>
 
       {/* 7. Advanced */}

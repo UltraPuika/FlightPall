@@ -32,9 +32,15 @@ export function ResultCard({ r, ranking, rank, preferredDuration, onShowCalendar
             <span className="text-xs font-semibold text-slate-400 tabular">#{rank}</span>
             <h4 className="text-base font-semibold text-slate-900">
               {r.airport.code} <ArrowRight className="inline h-3.5 w-3.5 text-slate-400" /> {r.destination.city}
+              {r.differentReturnAirport && (
+                <>
+                  {' '}
+                  <ArrowRight className="inline h-3.5 w-3.5 text-slate-400" /> {r.returnAirport.code}
+                </>
+              )}
             </h4>
             <span className="text-sm text-slate-500">
-              {r.destination.country}
+              {r.destination.country !== 'Unknown' ? r.destination.country : ''}
               {r.offer.destinationAirport && r.offer.destinationAirport !== r.destination.code ? ` · ${r.offer.destinationAirport}` : ''}
             </span>
           </div>
@@ -57,7 +63,7 @@ export function ResultCard({ r, ranking, rank, preferredDuration, onShowCalendar
               arrive={timesKnown ? r.inboundLocal.arrive : undefined}
               arriveDate={r.inboundLocal.arriveDate}
               departDate={r.inboundLocal.departDate}
-              tzNote="arrival in home local time"
+              tzNote={`arrival in ${r.returnAirport.code} local time`}
               duration={r.offer.inbound.durationMinutes}
             />
           </div>
@@ -73,6 +79,11 @@ export function ResultCard({ r, ranking, rank, preferredDuration, onShowCalendar
             {r.vacation.holidayDays > 0 && <Badge tone="rose">{r.vacation.holidayDays} holiday{r.vacation.holidayDays === 1 ? '' : 's'}</Badge>}
             {r.offer.priceKind !== 'unpriced' && <Badge tone={stops === 0 ? 'emerald' : 'slate'}>{stops === 0 ? 'Direct' : `${stops} stop${stops === 1 ? '' : 's'}`}</Badge>}
             {r.combination.duration === preferredDuration && <Badge tone="violet">Preferred length</Badge>}
+            {r.differentReturnAirport && (
+              <Badge tone="sky" title="Two separate one-way tickets: out from one airport, back to another">
+                Back to {r.returnAirport.city} · 2 one-way tickets
+              </Badge>
+            )}
             {r.preferenceMatches.map((m) => (
               <Badge key={m} tone="violet">
                 {m}
@@ -89,12 +100,23 @@ export function ResultCard({ r, ranking, rank, preferredDuration, onShowCalendar
         <div className="flex flex-row items-end justify-between gap-3 sm:flex-col sm:items-end sm:text-right">
           <div>
             <div className="text-2xl font-bold tracking-tight text-slate-900 tabular">{r.adjustedPrice === null ? 'Price n/a' : formatEuro(r.adjustedPrice)}</div>
+            {r.passengers > 1 && r.adjustedPrice !== null && <div className="text-[11px] font-medium text-slate-500">total for {r.passengers} travellers</div>}
             {r.adjustedPrice === null && (
-              <div className="text-xs text-slate-500 tabular">plus {r.airport.code} airport cost {formatEuro(r.airportCost)}</div>
+              <div className="text-xs text-slate-500 tabular">plus {r.airport.code} airport cost {formatEuro(r.airportCostTotal)}</div>
             )}
             {r.adjustedPrice !== null && (
               <div className="text-xs text-slate-500 tabular">
-                ticket {formatEuro(r.flightPrice)} <span className="text-slate-400">{r.airportCost >= 0 ? '+' : '−'}</span> {r.airport.code} {formatEuro(Math.abs(r.airportCost))}
+                {r.passengers > 1 ? `${r.passengers} × ` : ''}ticket {formatEuro(r.flightPrice)} <span className="text-slate-400">{r.airportCostTotal >= 0 ? '+' : '−'}</span>{' '}
+                <span
+                  title={
+                    r.differentReturnAirport
+                      ? `½ × ${r.airport.code} ${formatEuro(r.airport.additionalCost)} + ½ × ${r.returnAirport.code} ${formatEuro(r.returnAirport.additionalCost)}${r.airportCostTotal !== r.airportCost ? ` per person × ${r.passengers}` : ''}`
+                      : undefined
+                  }
+                >
+                  {r.differentReturnAirport ? `½${r.airport.code}+½${r.returnAirport.code}` : r.airport.code} {formatEuro(Math.abs(r.airportCostTotal))}
+                </span>
+                {r.passengers > 1 && <div>{formatEuro(Math.round((r.adjustedPrice / r.passengers) * 100) / 100)} per person</div>}
               </div>
             )}
             <div className="mt-1">
@@ -109,7 +131,13 @@ export function ResultCard({ r, ranking, rank, preferredDuration, onShowCalendar
                 {r.offer.bookingProvider ?? 'Book'} <ExternalLink className="h-3.5 w-3.5" />
               </a>
             )}
-            {!r.offer.bookingUrl && r.externalLinks[0] && (
+            {!r.offer.bookingUrl &&
+              r.offer.legLinks?.map((l) => (
+                <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700">
+                  {l.label} <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              ))}
+            {!r.offer.bookingUrl && !r.offer.legLinks?.length && r.externalLinks[0] && (
               <a href={r.externalLinks[0].url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50">
                 {r.externalLinks[0].label} <ExternalLink className="h-3.5 w-3.5" />
               </a>

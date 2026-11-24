@@ -3,9 +3,9 @@
  * any flight API. Every offer is labelled `priceKind: 'demo'` and the UI marks it
  * "Sample data — not a real flight". Prices, times and routes are NOT real.
  */
-import type { DateCombination, FlightOffer } from '../../domain/types';
+import type { DateCombination, FlightOffer, OneWayFare } from '../../domain/types';
 import { DESTINATIONS, findDestination } from '../../data/airports';
-import { monthsInRange, weekdayOf } from '../../lib/dates';
+import { daysInMonth, formatYmd, monthsInRange, weekdayOf } from '../../lib/dates';
 import { addMinutesToInstant, localToInstant } from '../../lib/time';
 import type { FlightProvider, ProviderRequest, ProviderSearchQuery } from './types';
 
@@ -99,6 +99,35 @@ function buildOffer(origin: string, destCode: string, c: DateCombination, direct
   };
 }
 
+/** Deterministic demo one-way fare from `from` to `to` on a local date, or null if none. */
+function buildOneWay(from: string, to: string, date: string, home: string, dest: string, directOnly: boolean): OneWayFare | null {
+  if (!demoServesRoute(home, dest)) return null;
+  const d = findDestination(dest);
+  const key = `ow:${from}:${to}:${date}`;
+  if (rand(`ow-day:${key}`) < 0.3) return null;
+  const stops = rand(`stops:${home}:${dest}`) < 0.55 ? 0 : 1;
+  if (directOnly && stops > 0) return null;
+  const base = BASE_MINUTES[d.region] ?? 180;
+  const price = Math.max(12, Math.round((20 + base * 0.25 + rand(`owbase:${home}:${dest}`) * 70) * (0.6 + rand(`owp:${key}`) * 0.9) + (stops ? 15 : 0)));
+  const tz = from === home ? ORIGIN_TZ[home] ?? 'Europe/Riga' : d.timeZone === 'UTC' ? 'Europe/Riga' : d.timeZone;
+  const minutes = (6 + Math.floor(rand(`owt:${key}`) * 17)) * 60 + (rand(`owm:${key}`) < 0.5 ? 0 : 30);
+  const dur = Math.round(base + stops * (70 + rand(`owl:${key}`) * 120));
+  const departAt = localToInstant(date, minutes, tz);
+  const fromAirport = from === home ? home : d.airports[0] ?? from;
+  const toAirport = to === home ? home : d.airports[0] ?? to;
+  return {
+    id: `demo1:${key}`,
+    providerId: 'demo',
+    providerName: 'Demo data',
+    from: fromAirport,
+    to,
+    toAirport,
+    leg: { from: fromAirport, to: toAirport, departAt, arriveAt: addMinutesToInstant(departAt, dur), durationMinutes: dur, stops },
+    price,
+    priceKind: 'demo',
+  };
+}
+
 export function createDemoProvider(): FlightProvider {
   return {
     id: 'demo',
@@ -154,6 +183,35 @@ export function createDemoProvider(): FlightProvider {
         offers.push(...perDest);
       }
       return offers;
+    },
+    async executeOneWay(req, signal) {
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      await new Promise((r) => setTimeout(r, 20));
+      if (!req.month) return [];
+      const [y, m] = req.month.split('-').map(Number);
+      const days = Array.from({ length: daysInMonth(y, m) }, (_, i) => formatYmd(y, m, i + 1));
+      const isHome = (code: string) => code in ORIGIN_TZ;
+      const out: OneWayFare[] = [];
+      if (isHome(req.origin)) {
+        // Outbound: home → destination(s)
+        const dests = req.destination ? [req.destination] : DESTINATIONS.map((d) => d.code);
+        for (const d of dests) {
+          const perDest: OneWayFare[] = [];
+          for (const day of days) {
+            const f = buildOneWay(req.origin, d, day, req.origin, d, req.directOnly);
+            if (f) perDest.push(f);
+          }
+          if (!req.destination) perDest.sort((a, b) => a.price - b.price).splice(15);
+          out.push(...perDest);
+        }
+      } else if (req.destination) {
+        // Inbound: destination → home
+        for (const day of days) {
+          const f = buildOneWay(req.origin, req.destination, day, req.destination, req.origin, req.directOnly);
+          if (f) out.push(f);
+        }
+      }
+      return out;
     },
   };
 }

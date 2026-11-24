@@ -149,6 +149,15 @@ describe('search engine', () => {
     }
   });
 
+  it('excludes countries in anywhere mode', async () => {
+    const base = { airports: airports(), provider: createDemoProvider(), calendar: calendar(), schedule: DEFAULT_SCHEDULE, today: TODAY };
+    const all = await runSearch({ ...base, params: params({ mode: 'anywhere', destinations: [] }), signal: new AbortController().signal });
+    expect(all.results.some((r) => r.destination.countryCode === 'IT')).toBe(true);
+    const res = await runSearch({ ...base, params: params({ mode: 'anywhere', destinations: [], excludedCountries: ['IT', 'ES'] }), signal: new AbortController().signal });
+    expect(res.results.length).toBeGreaterThan(0);
+    expect(res.results.some((r) => ['IT', 'ES'].includes(r.destination.countryCode))).toBe(false);
+  });
+
   it('demo data is deterministic', async () => {
     const run = () =>
       runSearch({ params: params(), airports: airports(), provider: createDemoProvider(), calendar: calendar(), schedule: DEFAULT_SCHEDULE, signal: new AbortController().signal, today: TODAY });

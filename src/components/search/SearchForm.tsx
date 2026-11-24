@@ -38,6 +38,13 @@ export function SearchForm({ prefs, update, calendar, running, onSearch, onCance
   }, [p, errors.length]);
   const airportsOn = enabledAirports(prefs.airports);
   const months = isValidIsoDate(p.earliestDeparture) && isValidIsoDate(p.latestDeparture) && p.latestDeparture >= p.earliestDeparture ? monthsInRange(p.earliestDeparture, p.latestDeparture) : [];
+  const lastPossibleReturn = months.length
+    ? (() => {
+        const r = returnDateFor(p.latestDeparture, p.maxDuration, p.durationMode);
+        return p.latestReturn && p.latestReturn < r ? p.latestReturn : r;
+      })()
+    : undefined;
+  const previewMonths = lastPossibleReturn ? monthsInRange(p.earliestDeparture, lastPossibleReturn > p.earliestDeparture ? lastPossibleReturn : p.earliestDeparture) : [];
   const requestEstimate = prefs.provider === 'links' ? null : airportsOn.length * (p.mode === 'anywhere' ? 1 : Math.max(1, p.destinations.length)) * months.length;
 
   const setDuration = (patch: Partial<Pick<SearchParams, 'minDuration' | 'maxDuration' | 'preferredDuration'>>) => {
@@ -85,6 +92,11 @@ export function SearchForm({ prefs, update, calendar, running, onSearch, onCance
                 <RegionChip key={r} region={r} active={p.regions.includes(r)} onClick={() => set({ regions: p.regions.includes(r) ? p.regions.filter((x) => x !== r) : [...p.regions, r] })} />
               ))}
             </div>
+            <CountryExcluder
+              excluded={p.excludedCountries ?? []}
+              onChange={(excludedCountries) => set({ excludedCountries })}
+              disabled={prefs.provider === 'links'}
+            />
           </div>
         ) : (
           <DestinationPicker selected={p.destinations} onChange={(destinations) => set({ destinations })} />
@@ -141,36 +153,69 @@ export function SearchForm({ prefs, update, calendar, running, onSearch, onCance
       </Section>
 
       {/* 3. Dates */}
-      <Section step={3} title="Departure period" icon={<CalendarRange className="h-4 w-4 text-brand-600" />} hint="Any range, across months and years. Every day in it is a candidate departure date; you never pick return dates.">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <Section step={3} title="Departure period" icon={<CalendarRange className="h-4 w-4 text-brand-600" />} hint="Any range, across months and years. Every day in it is a possible departure date; return dates follow from the trip duration.">
+        <div className="grid grid-cols-2 gap-3">
           <Field label="Earliest departure">
             <input type="date" className={inputClass} value={p.earliestDeparture} min={todayIso()} onChange={(e) => e.target.value && set({ earliestDeparture: e.target.value })} />
           </Field>
           <Field label="Latest departure">
             <input type="date" className={inputClass} value={p.latestDeparture} min={p.earliestDeparture} onChange={(e) => e.target.value && set({ latestDeparture: e.target.value })} />
           </Field>
-          <Field label="Latest return (optional)" className="col-span-2 sm:col-span-1">
-            <div className="flex gap-1">
-              <input type="date" className={inputClass} value={p.latestReturn ?? ''} min={p.earliestDeparture} onChange={(e) => set({ latestReturn: e.target.value || undefined })} />
-              {p.latestReturn && (
-                <button type="button" aria-label="Clear latest return" className="rounded-lg px-2 text-slate-500 hover:bg-slate-100" onClick={() => set({ latestReturn: undefined })}>
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-          </Field>
         </div>
-        {months.length > 0 && (
+        <div className="mt-3">
+          {p.latestReturn === undefined ? (
+            <button type="button" className="text-xs font-medium text-brand-700 hover:underline" onClick={() => set({ latestReturn: lastPossibleReturn ?? p.latestDeparture })}>
+              + Must be back by a certain date
+            </button>
+          ) : (
+            <Field label="Must be back by" hint="Trips returning later are skipped.">
+              <div className="flex gap-2">
+                <input type="date" className={inputClass} value={p.latestReturn} min={p.earliestDeparture} onChange={(e) => set({ latestReturn: e.target.value || undefined })} />
+                <Button variant="ghost" onClick={() => set({ latestReturn: undefined })} title="Remove return limit">
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </Field>
+          )}
+        </div>
+        {months.length > 0 && lastPossibleReturn && (
           <>
-            <p className="mt-3 text-xs text-slate-600">
-              {diffDays(p.earliestDeparture, p.latestDeparture) + 1} possible departure days · {formatHuman(p.earliestDeparture, { weekday: true, year: true })} → {formatHuman(p.latestDeparture, { weekday: true, year: true })}
-            </p>
-            <div className="mt-3 grid grid-cols-2 gap-4 md:grid-cols-3">
-              {months.slice(0, 6).map((m) => (
-                <MonthGrid key={m} compact year={Number(m.slice(0, 4))} month={Number(m.slice(5))} calendar={calendar} rangeStart={p.earliestDeparture} rangeEnd={p.latestDeparture} />
+            <dl className="mt-4 grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-xl bg-brand-50 px-2 py-2">
+                <dt className="text-[11px] text-brand-800">Departure days</dt>
+                <dd className="text-lg font-semibold text-brand-900 tabular">{diffDays(p.earliestDeparture, p.latestDeparture) + 1}</dd>
+              </div>
+              <div className="rounded-xl bg-slate-50 px-2 py-2">
+                <dt className="text-[11px] text-slate-600">Latest return</dt>
+                <dd className="text-sm font-semibold leading-7 text-slate-900">{formatHuman(lastPossibleReturn, { weekday: true })}</dd>
+              </div>
+              <div className="rounded-xl bg-slate-50 px-2 py-2">
+                <dt className="text-[11px] text-slate-600">Date combinations</dt>
+                <dd className="text-lg font-semibold text-slate-900 tabular">{combos.toLocaleString()}</dd>
+              </div>
+            </dl>
+            <div className="mt-4 grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">
+              {previewMonths.slice(0, 4).map((m) => (
+                <MonthGrid
+                  key={m}
+                  compact
+                  year={Number(m.slice(0, 4))}
+                  month={Number(m.slice(5))}
+                  calendar={calendar}
+                  rangeStart={p.earliestDeparture}
+                  rangeEnd={p.latestDeparture}
+                  returnEnd={lastPossibleReturn}
+                />
               ))}
             </div>
-            {months.length > 6 && <p className="mt-2 text-xs text-slate-500">+{months.length - 6} more months. See the Calendar tab.</p>}
+            {previewMonths.length > 4 && <p className="mt-2 text-xs text-slate-500">+{previewMonths.length - 4} more months in the Calendar tab.</p>}
+            <ul className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-600">
+              <li className="flex items-center gap-1"><span className="h-3 w-3 rounded bg-brand-100 ring-1 ring-brand-300" />Departure days</li>
+              <li className="flex items-center gap-1"><span className="h-3 w-3 rounded border border-dashed border-brand-400" />Possible return days</li>
+              <li className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-rose-500" />Holiday</li>
+              <li className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" />Shortened / transferred</li>
+              <li className="flex items-center gap-1"><span className="h-3 w-3 rounded bg-slate-100" />Weekend</li>
+            </ul>
           </>
         )}
       </Section>
@@ -378,3 +423,51 @@ function DestinationPicker({ selected, onChange }: { selected: string[]; onChang
   );
 }
 
+
+const COUNTRIES = Array.from(new Map(DESTINATIONS.map((d) => [d.countryCode, d.country])).entries()).sort((a, b) => a[1].localeCompare(b[1]));
+
+function CountryExcluder({ excluded, onChange, disabled }: { excluded: string[]; onChange: (v: string[]) => void; disabled?: boolean }) {
+  const [q, setQ] = useState('');
+  const s = q.trim().toLowerCase();
+  const matches = s ? COUNTRIES.filter(([code, name]) => !excluded.includes(code) && (name.toLowerCase().includes(s) || code.toLowerCase() === s)).slice(0, 8) : [];
+  const name = (code: string) => COUNTRIES.find(([c]) => c === code)?.[1] ?? code;
+  return (
+    <div className="mt-4">
+      <div className="mb-1.5 text-xs font-medium text-slate-600">Exclude countries</div>
+      {excluded.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {excluded.map((code) => (
+            <span key={code} className="inline-flex items-center gap-1 rounded-full bg-rose-50 py-1 pl-3 pr-1 text-xs font-medium text-rose-800 ring-1 ring-rose-200">
+              <span className="line-through decoration-rose-400">{name(code)}</span>
+              <button type="button" aria-label={`Include ${name(code)} again`} className="rounded-full p-0.5 hover:bg-rose-100" onClick={() => onChange(excluded.filter((x) => x !== code))}>
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+          <button type="button" className="text-xs text-slate-500 hover:text-slate-800" onClick={() => onChange([])}>
+            Clear all
+          </button>
+        </div>
+      )}
+      <input className={inputClass} placeholder="Type a country to exclude, e.g. Türkiye" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Exclude a country" disabled={disabled} />
+      {matches.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {matches.map(([code, n]) => (
+            <button
+              key={code}
+              type="button"
+              onClick={() => {
+                onChange([...excluded, code]);
+                setQ('');
+              }}
+              className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-700 hover:border-rose-400 hover:text-rose-700"
+            >
+              − {n}
+            </button>
+          ))}
+        </div>
+      )}
+      {disabled && <p className="mt-1 text-xs text-slate-500">Not available in "No price data" mode, which can't tell destinations apart. Use specific destinations instead.</p>}
+    </div>
+  );
+}

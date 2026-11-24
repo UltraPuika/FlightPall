@@ -38,6 +38,7 @@ export function defaultSearchParams(today = todayIso()): SearchParams {
     mode: 'anywhere',
     destinations: [],
     regions: [],
+    excludedCountries: [],
     earliestDeparture: start,
     latestDeparture: addDays(start, 59),
     latestReturn: undefined,

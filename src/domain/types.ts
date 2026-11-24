@@ -171,6 +171,8 @@ export interface SearchParams {
   destinations: string[];
   /** Region filter for "anywhere" mode; empty = all */
   regions: DestinationRegion[];
+  /** ISO country codes to leave out in "anywhere" mode */
+  excludedCountries: string[];
   earliestDeparture: IsoDate;
   latestDeparture: IsoDate;
   /** Optional absolute limit for the return date */

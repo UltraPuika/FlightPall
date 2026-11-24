@@ -134,6 +134,7 @@ export async function runSearch(input: SearchInput): Promise<SearchProgress> {
     combinationsByKey: new Map(combinations.map((c) => [combinationKey(c), c])),
   };
   const regionFilter = params.mode === 'anywhere' && params.regions.length ? new Set(params.regions) : null;
+  const excluded = params.mode === 'anywhere' ? new Set(params.excludedCountries ?? []) : new Set<string>();
   const collected = new Map<string, TripResult>();
   let truncated = false;
 
@@ -147,6 +148,7 @@ export async function runSearch(input: SearchInput): Promise<SearchProgress> {
       const r = buildTripResult(offer, req.origin, ctx);
       if (!r) continue;
       if (regionFilter && r.destination.code !== 'ANYWHERE' && !regionFilter.has(r.destination.region)) continue;
+      if (excluded.size && excluded.has(r.destination.countryCode)) continue;
       collected.set(r.id, r);
     }
     progress.results = dedupeResults(collected.values());

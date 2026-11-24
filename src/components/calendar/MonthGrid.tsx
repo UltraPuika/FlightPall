@@ -13,6 +13,14 @@ export const CATEGORY_STYLE: Record<DayInfo['category'], { cell: string; label: 
   personal_day_off: { cell: 'bg-sky-100 text-sky-800 font-semibold', label: 'Personal day off / override', swatch: 'bg-sky-200' },
 };
 
+const DOT: Partial<Record<DayInfo['category'], string>> = {
+  public_holiday: 'bg-rose-500',
+  transferred_day_off: 'bg-violet-500',
+  transferred_working_day: 'bg-amber-500',
+  shortened: 'bg-amber-500',
+  personal_day_off: 'bg-sky-500',
+};
+
 export function Legend({ showTrip }: { showTrip?: boolean }) {
   return (
     <ul className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-slate-600">
@@ -23,8 +31,8 @@ export function Legend({ showTrip }: { showTrip?: boolean }) {
         </li>
       ))}
       <li className="flex items-center gap-1.5">
-        <span className="inline-block h-3 w-3 rounded ring-1 ring-brand-500" />
-        Search period
+        <span className="inline-block h-3 w-3 rounded bg-brand-100 ring-1 ring-brand-500" />
+        Departure period (dot = day type)
       </li>
       {showTrip && (
         <li className="flex items-center gap-1.5">
@@ -42,13 +50,15 @@ export interface MonthGridProps {
   calendar: HolidayCalendar;
   rangeStart?: IsoDate;
   rangeEnd?: IsoDate;
+  /** Last possible return date; days after rangeEnd up to this are shown as the return window */
+  returnEnd?: IsoDate;
   trip?: { departure: IsoDate; return: IsoDate };
   selected?: IsoDate | null;
   onSelect?: (date: IsoDate) => void;
   compact?: boolean;
 }
 
-export function MonthGrid({ year, month, calendar, rangeStart, rangeEnd, trip, selected, onSelect, compact }: MonthGridProps) {
+export function MonthGrid({ year, month, calendar, rangeStart, rangeEnd, returnEnd, trip, selected, onSelect, compact }: MonthGridProps) {
   const first = formatYmd(year, month, 1);
   // Monday-first grid
   const lead = (weekdayOf(first) + 6) % 7;
@@ -61,7 +71,7 @@ export function MonthGrid({ year, month, calendar, rangeStart, rangeEnd, trip, s
       <div className={cx('mb-1.5 font-semibold text-slate-800', compact ? 'text-xs' : 'text-sm')}>
         {MONTH_NAMES[month - 1]} {year}
       </div>
-      <div className="grid grid-cols-7 gap-0.5 text-center" role="grid" aria-label={`${MONTH_NAMES[month - 1]} ${year}`}>
+      <div className={cx('grid grid-cols-7 text-center', compact ? 'gap-1' : 'gap-0.5')} role="grid" aria-label={`${MONTH_NAMES[month - 1]} ${year}`}>
         {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
           <div key={i} className="text-[10px] font-medium uppercase text-slate-400" role="columnheader">
             {d}
@@ -70,22 +80,38 @@ export function MonthGrid({ year, month, calendar, rangeStart, rangeEnd, trip, s
         {cells.map((date, i) => {
           if (!date) return <div key={i} />;
           const info = calendar.day(date);
-          const inRange = rangeStart && rangeEnd && date >= rangeStart && date <= rangeEnd;
+          const inRange = !!(rangeStart && rangeEnd && date >= rangeStart && date <= rangeEnd);
+          const isRangeEdge = inRange && (date === rangeStart || date === rangeEnd);
+          const inReturn = !!(rangeEnd && returnEnd && date > rangeEnd && date <= returnEnd);
           const isTripEdge = trip && (date === trip.departure || date === trip.return);
           const inTrip = trip && date > trip.departure && date < trip.return;
           const names = [...info.entries.map((e) => e.name), info.override ? `Override: ${info.override.kind.replace('_', ' ')}` : ''].filter(Boolean);
-          const title = `${date} · ${CATEGORY_STYLE[info.category].label}${names.length ? ` · ${names.join('; ')}` : ''}`;
+          const status = inRange ? ' · possible departure' : inReturn ? ' · possible return' : '';
+          const title = `${date} · ${CATEGORY_STYLE[info.category].label}${status}${names.length ? ` · ${names.join('; ')}` : ''}`;
+          const highlighted = isTripEdge || inTrip || inRange || inReturn;
+          // When the cell background is used for the range, show the day type as a dot instead
+          const dot = highlighted ? DOT[info.category] : undefined;
           const content = (
             <>
               {Number(date.slice(8))}
-              {info.entries.some((e) => e.type === 'observance') && !compact && <span className="absolute right-0.5 top-0.5 h-1 w-1 rounded-full bg-slate-400" />}
+              {dot && <span className={cx('absolute bottom-0.5 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full', dot)} />}
+              {info.entries.some((e) => e.type === 'observance') && !compact && !dot && <span className="absolute right-0.5 top-0.5 h-1 w-1 rounded-full bg-slate-400" />}
             </>
           );
           const cls = cx(
             'relative flex items-center justify-center rounded-md tabular transition',
-            compact ? 'h-6 text-[11px]' : 'h-9 text-sm',
-            isTripEdge ? 'bg-brand-600 font-semibold text-white' : inTrip ? 'bg-brand-100 text-brand-900' : CATEGORY_STYLE[info.category].cell,
-            inRange && !isTripEdge && 'ring-1 ring-inset ring-brand-500',
+            compact ? 'h-8 text-xs' : 'h-9 text-sm',
+            isTripEdge
+              ? 'bg-brand-600 font-semibold text-white'
+              : inTrip
+                ? 'bg-brand-100 text-brand-900'
+                : isRangeEdge
+                  ? 'bg-brand-600 font-semibold text-white'
+                  : inRange
+                    ? 'bg-brand-100 font-medium text-brand-900'
+                    : inReturn
+                      ? 'border border-dashed border-brand-400 bg-white text-brand-800'
+                      : CATEGORY_STYLE[info.category].cell,
             selected === date && 'outline-2 outline-offset-1 outline-slate-900',
             onSelect && 'cursor-pointer hover:brightness-95',
           );

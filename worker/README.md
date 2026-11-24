@@ -13,7 +13,11 @@ This ~80-line worker covers both. It runs on Cloudflare Workers' **free plan** (
    - Sign up at <https://www.travelpayouts.com/> (free affiliate account, no payment details).
    - Join the **Aviasales** program and copy your API token (Profile → API token).
 2. **Create a free Cloudflare account** at <https://dash.cloudflare.com/sign-up>.
-3. **Deploy the worker**
+3. **Deploy the worker**, either in the browser (easiest) or from the command line.
+
+   **In the browser (no tools needed):** In Cloudflare go to *Workers & Pages → Create → Create Worker*, name it `flightpall-proxy` and click *Deploy*. Click *Edit code*, replace everything with the contents of [`src.js`](src.js), and click *Deploy*. Then open *Settings → Variables and Secrets → Add*, choose type **Secret**, name `TRAVELPAYOUTS_TOKEN`, and paste your token. By default the worker accepts requests from `https://ultrapuika.github.io` and `http://localhost:5173`. To allow other sites, add a text variable `ALLOWED_ORIGINS` (comma-separated).
+
+   **From the command line:**
    ```bash
    cd worker
    npx wrangler login

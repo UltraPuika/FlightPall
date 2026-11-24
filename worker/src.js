@@ -13,6 +13,7 @@
 const UPSTREAM = 'https://api.travelpayouts.com/aviasales/v3/prices_for_dates';
 const ALLOWED_PARAMS = ['origin', 'destination', 'departure_at', 'return_at', 'one_way', 'direct', 'currency', 'market', 'limit', 'page', 'sorting', 'unique'];
 const IATA = /^[A-Z]{3}$/;
+const DEFAULT_ORIGINS = 'https://ultrapuika.github.io,http://localhost:5173';
 
 function cors(origin, allowed) {
   const ok = allowed.includes('*') || allowed.includes(origin);
@@ -29,7 +30,8 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const origin = request.headers.get('Origin') || '';
-    const allowed = (env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
+    // Default: the FlightPall GitHub Pages site + local dev. Override with the ALLOWED_ORIGINS variable.
+    const allowed = (env.ALLOWED_ORIGINS || DEFAULT_ORIGINS).split(',').map((s) => s.trim()).filter(Boolean);
     const corsHeaders = cors(origin, allowed);
     if (origin && !corsHeaders) return json({ success: false, error: 'Origin not allowed' }, 403, {});
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders || {} });

@@ -54,13 +54,7 @@ export function SettingsPanel({ prefs, setPrefs, update, onClearCache }: Props) 
               </label>
             ))}
           </div>
-          {prefs.provider === 'travelpayouts' && (
-            <div className="mt-3 max-w-xl">
-              <Field label="Proxy URL (your Cloudflare Worker)" hint={proxy ? `Using: ${proxy}` : 'Required. The API token stays inside the worker and is never sent to the browser.'}>
-                <input className={inputClass} placeholder="https://flightpall-proxy.<you>.workers.dev" value={prefs.proxyUrl} onChange={(e) => update('proxyUrl', e.target.value)} />
-              </Field>
-            </div>
-          )}
+          {prefs.provider === 'travelpayouts' && <TravelpayoutsSetup proxyUrl={prefs.proxyUrl} resolved={proxy} onChange={(v) => update('proxyUrl', v)} />}
           <div className="mt-3">
             <Button variant="ghost" onClick={() => { onClearCache(); setMessage('Response cache cleared.'); }}>
               <Trash2 className="h-3.5 w-3.5" /> Clear cached flight responses
@@ -357,6 +351,104 @@ function PersonalDays({ prefs, update }: { prefs: Preferences; update: Props['up
             </button>
           </span>
         ))}
+      </div>
+    </div>
+  );
+}
+
+const WORKER_CODE_URL = 'https://raw.githubusercontent.com/UltraPuika/FlightPall/main/worker/src.js';
+
+function TravelpayoutsSetup({ proxyUrl, resolved, onChange }: { proxyUrl: string; resolved?: string; onChange: (v: string) => void }) {
+  const [test, setTest] = useState<{ state: 'idle' | 'running' | 'ok' | 'error'; text?: string }>({ state: 'idle' });
+  const [copied, setCopied] = useState(false);
+
+  const runTest = async () => {
+    if (!resolved) return;
+    setTest({ state: 'running' });
+    const now = new Date();
+    const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const month = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+    try {
+      const res = await fetch(`${resolved.replace(/\/+$/, '')}/prices_for_dates?origin=RIX&departure_at=${month}&one_way=false&currency=eur&sorting=price&limit=5`);
+      const text = await res.text();
+      let body: { success?: boolean; error?: string; data?: { destination: string; price: number; departure_at: string }[] } = {};
+      try {
+        body = JSON.parse(text);
+      } catch {
+        /* not JSON */
+      }
+      if (!res.ok || body.success === false) {
+        const hint =
+          res.status === 401 || /token|unauthori/i.test(text)
+            ? ' The token looks wrong. Check the TRAVELPAYOUTS_TOKEN secret in Cloudflare.'
+            : res.status === 403
+              ? ' The worker rejected this site. Check ALLOWED_ORIGINS.'
+              : '';
+        setTest({ state: 'error', text: `HTTP ${res.status}: ${body.error ?? text.slice(0, 200)}${hint}` });
+        return;
+      }
+      const rows = body.data ?? [];
+      setTest({
+        state: 'ok',
+        text: rows.length
+          ? `Connected. ${rows.length} sample fares from Riga in ${month}, e.g. ${rows.slice(0, 3).map((r) => `${r.destination} €${r.price}`).join(', ')}.`
+          : `Connected, but no cached fares from Riga for ${month}. That's normal for quiet months. Try a search.`,
+      });
+    } catch (err) {
+      setTest({ state: 'error', text: `Could not reach the worker (${(err as Error).message}). Check the URL. It should start with https:// and end with .workers.dev` });
+    }
+  };
+
+  return (
+    <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      <ol className="space-y-3 text-sm text-slate-700">
+        <li>
+          <span className="font-semibold text-slate-900">1. Get a free API token.</span> Sign up at{' '}
+          <a className="text-brand-700 underline" href="https://www.travelpayouts.com/" target="_blank" rel="noopener noreferrer">travelpayouts.com</a>, join the <b>Aviasales</b> program, and copy your <b>API token</b> from the dashboard's API / developer section.
+        </li>
+        <li>
+          <span className="font-semibold text-slate-900">2. Create a free Cloudflare account</span> at{' '}
+          <a className="text-brand-700 underline" href="https://dash.cloudflare.com/sign-up" target="_blank" rel="noopener noreferrer">dash.cloudflare.com</a>. No card is needed.
+        </li>
+        <li>
+          <span className="font-semibold text-slate-900">3. Create the worker in your browser.</span> In Cloudflare go to <b>Workers &amp; Pages → Create → Create Worker</b>, name it <code>flightpall-proxy</code> and click <b>Deploy</b>. Then click <b>Edit code</b>, replace everything with the{' '}
+          <a className="text-brand-700 underline" href={WORKER_CODE_URL} target="_blank" rel="noopener noreferrer">worker code</a>{' '}
+          <button
+            type="button"
+            className="rounded border border-slate-300 px-1.5 text-xs hover:bg-slate-50"
+            onClick={async () => {
+              try {
+                const code = await (await fetch(WORKER_CODE_URL)).text();
+                await navigator.clipboard.writeText(code);
+                setCopied(true);
+              } catch {
+                window.open(WORKER_CODE_URL, '_blank');
+              }
+            }}
+          >
+            {copied ? 'Copied ✓' : 'Copy code'}
+          </button>{' '}
+          and click <b>Deploy</b>.
+        </li>
+        <li>
+          <span className="font-semibold text-slate-900">4. Add the token as a secret.</span> In the worker go to <b>Settings → Variables and Secrets → Add</b>. Choose type <b>Secret</b>, name <code>TRAVELPAYOUTS_TOKEN</code>, paste the token as the value, and save.
+        </li>
+        <li>
+          <span className="font-semibold text-slate-900">5. Paste the worker URL below</span> (shown on the worker page, like <code>https://flightpall-proxy.yourname.workers.dev</code>) and click <b>Test connection</b>.
+        </li>
+      </ol>
+      <div className="space-y-3">
+        <Field label="Worker URL" hint={resolved ? `Using: ${resolved}` : 'The API token stays inside the worker and is never sent to the browser.'}>
+          <input className={inputClass} placeholder="https://flightpall-proxy.yourname.workers.dev" value={proxyUrl} onChange={(e) => onChange(e.target.value.trim())} />
+        </Field>
+        <Button variant="primary" onClick={runTest} disabled={!resolved || test.state === 'running'}>
+          {test.state === 'running' ? 'Testing…' : 'Test connection'}
+        </Button>
+        {test.state === 'ok' && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800 ring-1 ring-emerald-200">✓ {test.text}</p>}
+        {test.state === 'error' && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800 ring-1 ring-rose-200">✗ {test.text}</p>}
+        <p className="text-xs text-slate-500">
+          Prices are fares Aviasales users found in the last ~48 h. They're shown as <b>Indicative</b>, so always confirm the final price on Aviasales before booking.
+        </p>
       </div>
     </div>
   );

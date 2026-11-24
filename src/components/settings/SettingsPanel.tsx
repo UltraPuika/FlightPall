@@ -369,7 +369,7 @@ function TravelpayoutsSetup({ proxyUrl, resolved, onChange }: { proxyUrl: string
     const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
     const month = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
     try {
-      const res = await fetch(`${resolved.replace(/\/+$/, '')}/prices_for_dates?origin=RIX&departure_at=${month}&one_way=false&currency=eur&sorting=price&limit=5`);
+      const res = await fetch(`${resolved}/prices_for_dates?origin=RIX&departure_at=${month}&one_way=false&currency=eur&sorting=price&limit=5`);
       const text = await res.text();
       let body: { success?: boolean; error?: string; data?: { destination: string; price: number; departure_at: string }[] } = {};
       try {
@@ -377,14 +377,20 @@ function TravelpayoutsSetup({ proxyUrl, resolved, onChange }: { proxyUrl: string
       } catch {
         /* not JSON */
       }
+      if (/^\s*</.test(text)) {
+        setTest({ state: 'error', text: `HTTP ${res.status}: got a web page instead of fare data. Check the Worker URL, and make sure you replaced the Hello World code with the FlightPall worker code and clicked Deploy.` });
+        return;
+      }
       if (!res.ok || body.success === false) {
-        const hint =
-          res.status === 401 || /token|unauthori/i.test(text)
-            ? ' The token looks wrong. Check the TRAVELPAYOUTS_TOKEN secret in Cloudflare.'
+        const msg = body.error ?? text.slice(0, 200);
+        const hint = /TRAVELPAYOUTS_TOKEN/.test(msg)
+          ? ' Add the secret in Cloudflare: worker → Settings → Variables and Secrets.'
+          : res.status === 401 || /unauthori|invalid token|token/i.test(msg)
+            ? ' The token looks wrong. Check the TRAVELPAYOUTS_TOKEN secret in Cloudflare, and that you joined the Aviasales program.'
             : res.status === 403
               ? ' The worker rejected this site. Check ALLOWED_ORIGINS.'
               : '';
-        setTest({ state: 'error', text: `HTTP ${res.status}: ${body.error ?? text.slice(0, 200)}${hint}` });
+        setTest({ state: 'error', text: `HTTP ${res.status}: ${msg}${hint}` });
         return;
       }
       const rows = body.data ?? [];

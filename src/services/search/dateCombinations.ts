@@ -25,6 +25,23 @@ export function returnDateFor(departure: IsoDate, duration: number, mode: Durati
   return addDays(departure, mode === 'calendar_days' ? duration - 1 : duration);
 }
 
+/** Last departure date that still lets a trip of `minDuration` end on or before `latestReturn`. */
+export function latestDepartureFor(latestReturn: IsoDate, minDuration: number, mode: DurationMode): IsoDate {
+  return addDays(latestReturn, -(mode === 'calendar_days' ? minDuration - 1 : minDuration));
+}
+
+/**
+ * The user picks a travel window [earliestDeparture, latestReturn]; the latest
+ * departure is derived from it so that even the shortest trip still fits.
+ */
+export function normalizeTravelWindow<T extends { earliestDeparture: IsoDate; latestDeparture: IsoDate; latestReturn?: IsoDate; minDuration: number; maxDuration: number; durationMode: DurationMode }>(p: T): T {
+  if (!isValidIsoDate(p.earliestDeparture)) return p;
+  const latestReturn = p.latestReturn && isValidIsoDate(p.latestReturn) ? p.latestReturn : isValidIsoDate(p.latestDeparture) ? returnDateFor(p.latestDeparture, p.maxDuration, p.durationMode) : undefined;
+  if (!latestReturn) return p;
+  const derived = latestDepartureFor(latestReturn, Math.max(p.minDuration, p.durationMode === 'calendar_days' ? 1 : 0), p.durationMode);
+  return { ...p, latestReturn, latestDeparture: derived < p.earliestDeparture ? p.earliestDeparture : derived };
+}
+
 export function durationOf(departure: IsoDate, returnDate: IsoDate, mode: DurationMode): number {
   const nights = diffDays(departure, returnDate);
   return mode === 'calendar_days' ? nights + 1 : nights;

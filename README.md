@@ -78,7 +78,7 @@ All logic runs client-side. The only server-side piece is the optional proxy wor
 - **Calendar days** (default): departure and return days both count. 4 days from Fri 15 Jan returns Mon 18 Jan.
 - **Nights**: 4 nights from Fri 15 Jan returns Tue 19 Jan.
 
-All durations from minimum to maximum are searched, and each (departure, return) pair appears once. An optional *latest return* date drops combinations that end later. Past departure dates are skipped.
+You pick a travel window: **From** (earliest departure) and **To** (back home by). The last possible departure is derived so the shortest trip still fits. All durations from minimum to maximum are searched, each (departure, return) pair appears once, and no trip ends after the To date. Past departure dates are skipped.
 
 ### Vacation days
 

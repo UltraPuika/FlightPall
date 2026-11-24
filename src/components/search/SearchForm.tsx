@@ -6,7 +6,7 @@ import { diffDays, formatHuman, isValidIsoDate, monthsInRange, todayIso, WEEKDAY
 import { formatMinutes } from '../../lib/time';
 import { enabledAirports } from '../../services/airports';
 import type { HolidayCalendar } from '../../services/calendar/holidayCalendar';
-import { generateDateCombinations, returnDateFor } from '../../services/search/dateCombinations';
+import { generateDateCombinations, normalizeTravelWindow, returnDateFor } from '../../services/search/dateCombinations';
 import { validateSearch } from '../../services/search/searchEngine';
 import type { Preferences } from '../../services/storage';
 import { MonthGrid } from '../calendar/MonthGrid';
@@ -25,7 +25,8 @@ interface Props {
 
 export function SearchForm({ prefs, update, calendar, running, onSearch, onCancel, onOpenSettings }: Props) {
   const p = prefs.search;
-  const set = (patch: Partial<SearchParams>) => update('search', { ...p, ...patch });
+  // Latest departure is always derived from the travel window (From → To) and the minimum duration
+  const set = (patch: Partial<SearchParams>) => update('search', normalizeTravelWindow({ ...p, ...patch }));
   const errors = useMemo(() => validateSearch(p, prefs.airports), [p, prefs.airports]);
 
   const combos = useMemo(() => {
@@ -38,12 +39,8 @@ export function SearchForm({ prefs, update, calendar, running, onSearch, onCance
   }, [p, errors.length]);
   const airportsOn = enabledAirports(prefs.airports);
   const months = isValidIsoDate(p.earliestDeparture) && isValidIsoDate(p.latestDeparture) && p.latestDeparture >= p.earliestDeparture ? monthsInRange(p.earliestDeparture, p.latestDeparture) : [];
-  const lastPossibleReturn = months.length
-    ? (() => {
-        const r = returnDateFor(p.latestDeparture, p.maxDuration, p.durationMode);
-        return p.latestReturn && p.latestReturn < r ? p.latestReturn : r;
-      })()
-    : undefined;
+  const windowEnd = p.latestReturn ?? returnDateFor(p.latestDeparture, p.maxDuration, p.durationMode);
+  const lastPossibleReturn = months.length ? windowEnd : undefined;
   const previewMonths = lastPossibleReturn ? monthsInRange(p.earliestDeparture, lastPossibleReturn > p.earliestDeparture ? lastPossibleReturn : p.earliestDeparture) : [];
   const requestEstimate = prefs.provider === 'links' ? null : airportsOn.length * (p.mode === 'anywhere' ? 1 : Math.max(1, p.destinations.length)) * months.length;
 
@@ -153,31 +150,20 @@ export function SearchForm({ prefs, update, calendar, running, onSearch, onCance
       </Section>
 
       {/* 3. Dates */}
-      <Section step={3} title="Departure period" icon={<CalendarRange className="h-4 w-4 text-brand-600" />} hint="Any range, across months and years. Every day in it is a possible departure date; return dates follow from the trip duration.">
+      <Section step={3} title="Travel window" icon={<CalendarRange className="h-4 w-4 text-brand-600" />} hint="Pick when you can leave and when you must be back. Any range works, across months and years. FlightPall tries every departure and return date in between.">
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Earliest departure">
+          <Field label="From (earliest departure)">
             <input type="date" className={inputClass} value={p.earliestDeparture} min={todayIso()} onChange={(e) => e.target.value && set({ earliestDeparture: e.target.value })} />
           </Field>
-          <Field label="Latest departure">
-            <input type="date" className={inputClass} value={p.latestDeparture} min={p.earliestDeparture} onChange={(e) => e.target.value && set({ latestDeparture: e.target.value })} />
+          <Field label="To (back home by)">
+            <input type="date" className={inputClass} value={windowEnd} min={p.earliestDeparture} onChange={(e) => e.target.value && set({ latestReturn: e.target.value })} />
           </Field>
         </div>
-        <div className="mt-3">
-          {p.latestReturn === undefined ? (
-            <button type="button" className="text-xs font-medium text-brand-700 hover:underline" onClick={() => set({ latestReturn: lastPossibleReturn ?? p.latestDeparture })}>
-              + Must be back by a certain date
-            </button>
-          ) : (
-            <Field label="Must be back by" hint="Trips returning later are skipped.">
-              <div className="flex gap-2">
-                <input type="date" className={inputClass} value={p.latestReturn} min={p.earliestDeparture} onChange={(e) => set({ latestReturn: e.target.value || undefined })} />
-                <Button variant="ghost" onClick={() => set({ latestReturn: undefined })} title="Remove return limit">
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            </Field>
-          )}
-        </div>
+        {months.length > 0 && (
+          <p className="mt-2 text-xs text-slate-500">
+            The whole trip fits between these dates. With a {p.minDuration}-{p.durationMode === 'nights' ? 'night' : 'day'} minimum, the last possible departure is {formatHuman(p.latestDeparture, { weekday: true })}.
+          </p>
+        )}
         {months.length > 0 && lastPossibleReturn && (
           <>
             <dl className="mt-4 grid grid-cols-3 gap-2 text-center">
@@ -186,8 +172,8 @@ export function SearchForm({ prefs, update, calendar, running, onSearch, onCance
                 <dd className="text-lg font-semibold text-brand-900 tabular">{diffDays(p.earliestDeparture, p.latestDeparture) + 1}</dd>
               </div>
               <div className="rounded-xl bg-slate-50 px-2 py-2">
-                <dt className="text-[11px] text-slate-600">Latest return</dt>
-                <dd className="text-sm font-semibold leading-7 text-slate-900">{formatHuman(lastPossibleReturn, { weekday: true })}</dd>
+                <dt className="text-[11px] text-slate-600">Trip window</dt>
+                <dd className="text-lg font-semibold text-slate-900 tabular">{diffDays(p.earliestDeparture, lastPossibleReturn) + 1} days</dd>
               </div>
               <div className="rounded-xl bg-slate-50 px-2 py-2">
                 <dt className="text-[11px] text-slate-600">Date combinations</dt>
@@ -344,7 +330,7 @@ export function SearchForm({ prefs, update, calendar, running, onSearch, onCance
           {airportsOn.length} airport{airportsOn.length === 1 ? '' : 's'} · {p.mode === 'anywhere' ? 'anywhere' : `${p.destinations.length} destination${p.destinations.length === 1 ? '' : 's'}`}
           {requestEstimate !== null && ` · about ${requestEstimate} grouped provider request${requestEstimate === 1 ? '' : 's'} (one per airport × destination × month)`}
         </p>
-        <SavedSearches params={p} onLoad={(params) => update('search', params)} />
+        <SavedSearches params={p} onLoad={(params) => update('search', normalizeTravelWindow({ ...p, ...params }))} />
       </div>
     </Card>
   );

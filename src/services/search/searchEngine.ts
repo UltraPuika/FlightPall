@@ -13,7 +13,7 @@ import { enabledAirports } from '../airports';
 import type { HolidayCalendar } from '../calendar/holidayCalendar';
 import type { FlightProvider, ProviderRequest } from '../providers/types';
 import type { CacheStore } from './cache';
-import { combinationKey, generateDateCombinations, validateWindow } from './dateCombinations';
+import { combinationKey, generateDateCombinations, returnDateFor, validateWindow } from './dateCombinations';
 import { isAbort, runQueue } from './requestQueue';
 import { buildTripResult, dedupeResults, type TripBuildContext } from './tripBuilder';
 
@@ -55,6 +55,8 @@ export function validateSearch(params: SearchParams, airports: DepartureAirport[
     durationMode: params.durationMode,
     latestReturn: params.latestReturn,
   });
+  if (params.latestReturn && params.earliestDeparture <= params.latestReturn && returnDateFor(params.earliestDeparture, params.minDuration, params.durationMode) > params.latestReturn)
+    errors.push('The travel window is shorter than the minimum trip duration.');
   if (!enabledAirports(airports).length) errors.push('Enable at least one departure airport.');
   if (params.mode === 'specific' && !params.destinations.length) errors.push('Choose at least one destination, or switch to "Anywhere".');
   if (params.preferredDuration < params.minDuration || params.preferredDuration > params.maxDuration)

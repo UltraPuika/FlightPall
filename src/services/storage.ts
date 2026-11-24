@@ -6,6 +6,7 @@ import type { CalendarSettings, DepartureAirport, SearchParams, SortKey, WorkSch
 import { DEFAULT_DEPARTURE_AIRPORTS } from '../data/airports';
 import { DEFAULT_CALENDAR_SETTINGS, DEFAULT_SCHEDULE } from './calendar/holidayCalendar';
 import { addDays, todayIso } from '../lib/dates';
+import { normalizeTravelWindow } from './search/dateCombinations';
 
 export type ProviderChoice = 'demo' | 'travelpayouts' | 'links';
 
@@ -40,8 +41,8 @@ export function defaultSearchParams(today = todayIso()): SearchParams {
     regions: [],
     excludedCountries: [],
     earliestDeparture: start,
-    latestDeparture: addDays(start, 59),
-    latestReturn: undefined,
+    latestDeparture: addDays(start, 59 - 2),
+    latestReturn: addDays(start, 59),
     durationMode: 'calendar_days',
     preferredDuration: 4,
     minDuration: 3,
@@ -90,7 +91,7 @@ export function mergePreferences(stored: Partial<Preferences> | null | undefined
   if (search.latestDeparture < today) {
     search.earliestDeparture = defaults.search.earliestDeparture;
     search.latestDeparture = defaults.search.latestDeparture;
-    search.latestReturn = undefined;
+    search.latestReturn = defaults.search.latestReturn;
   }
   return {
     ...defaults,
@@ -98,7 +99,7 @@ export function mergePreferences(stored: Partial<Preferences> | null | undefined
     airports: Array.isArray(stored.airports) && stored.airports.length ? stored.airports : defaults.airports,
     schedule: { ...defaults.schedule, ...(stored.schedule ?? {}) },
     calendar: { ...defaults.calendar, ...(stored.calendar ?? {}) },
-    search,
+    search: normalizeTravelWindow(search),
   } as Preferences;
 }
 

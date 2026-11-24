@@ -108,7 +108,7 @@ export default function App() {
             calendar={calendar}
             settings={prefs.calendar}
             onChange={(c) => update('calendar', c)}
-            range={{ start: prefs.search.earliestDeparture, end: prefs.search.latestDeparture }}
+            range={{ start: prefs.search.earliestDeparture, end: prefs.search.latestReturn ?? prefs.search.latestDeparture }}
             trip={highlight}
             onClearTrip={() => setHighlight(null)}
           />

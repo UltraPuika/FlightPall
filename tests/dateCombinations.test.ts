@@ -79,3 +79,30 @@ describe('date combination generator', () => {
     expect(validateWindow({ earliestDeparture: '2027-01-01', latestDeparture: '2027-01-31', minDuration: 0, maxDuration: 3, durationMode: 'nights' })).toHaveLength(0);
   });
 });
+
+describe('travel window (From → To)', () => {
+  it('derives the latest departure so the shortest trip still fits', async () => {
+    const { normalizeTravelWindow } = await import('../src/services/search/dateCombinations');
+    const w = normalizeTravelWindow({ earliestDeparture: '2027-01-01', latestDeparture: '2027-12-31', latestReturn: '2027-02-28', minDuration: 3, maxDuration: 5, durationMode: 'calendar_days' as const });
+    expect(w.latestDeparture).toBe('2027-02-26');
+    const n = normalizeTravelWindow({ ...w, durationMode: 'nights' as const, minDuration: 2 });
+    expect(n.latestDeparture).toBe('2027-02-26');
+    const combos = generateDateCombinations(w);
+    expect(combos.every((c) => c.departure >= '2027-01-01' && c.return <= '2027-02-28')).toBe(true);
+    expect(combos.at(-1)).toMatchObject({ departure: '2027-02-26', return: '2027-02-28' });
+  });
+
+  it('fills in a missing To date from the old latest departure', async () => {
+    const { normalizeTravelWindow } = await import('../src/services/search/dateCombinations');
+    const w = normalizeTravelWindow({ earliestDeparture: '2027-01-01', latestDeparture: '2027-01-31', latestReturn: undefined as string | undefined, minDuration: 3, maxDuration: 5, durationMode: 'calendar_days' as const });
+    expect(w.latestReturn).toBe('2027-02-04');
+    expect(w.latestDeparture).toBe('2027-02-02');
+  });
+
+  it('clamps when the window is shorter than the minimum trip', async () => {
+    const { normalizeTravelWindow } = await import('../src/services/search/dateCombinations');
+    const w = normalizeTravelWindow({ earliestDeparture: '2027-01-10', latestDeparture: '2027-01-10', latestReturn: '2027-01-11', minDuration: 4, maxDuration: 5, durationMode: 'calendar_days' as const });
+    expect(w.latestDeparture).toBe('2027-01-10');
+    expect(generateDateCombinations(w)).toHaveLength(0);
+  });
+});
